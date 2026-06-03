@@ -302,9 +302,12 @@ class _FakeLocator:
 
 
 class _FakePage:
-    """Page mínima: locator(...).count() devolve quantos campos de senha existem."""
-    def __init__(self, campos_senha):
+    """Page mínima: locator(...).count() devolve quantos campos de senha existem.
+    `url` permite testar a detecção de sessão-morta por redirect pra fora do portal."""
+    def __init__(self, campos_senha,
+                 url="https://www3.tjrj.jus.br/consultaprocessual/#/consultaportal"):
         self._campos_senha = campos_senha
+        self.url = url
 
     def locator(self, selector):
         return _FakeLocator(self._campos_senha)
@@ -318,11 +321,19 @@ def test_erro_iframe_com_login_expirado_retorna_login_expirado():
 
 
 def test_erro_iframe_sem_login_expirado_retorna_runtimeerror():
-    # Sem campo de senha => falha genuína de navegação naquele processo
+    # Sem campo de senha E ainda no portal => falha genuína de navegação daquele processo
     page = _FakePage(campos_senha=0)
     erro = asyncio.run(_erro_iframe_ausente(page, "0837412-55.2022.8.19.0001"))
     assert isinstance(erro, RuntimeError)
     assert not isinstance(erro, LoginExpiradoError)
+
+
+def test_erro_iframe_redirect_fora_do_portal_retorna_login_expirado():
+    # Sessão expira -> portal redireciona pro site público (sem campo de senha).
+    # Mesmo sem senha, sair do portal = sessão morta => LoginExpiradoError (parada limpa).
+    page = _FakePage(campos_senha=0, url="https://www.tjrj.jus.br/")
+    erro = asyncio.run(_erro_iframe_ausente(page, "0837412-55.2022.8.19.0001"))
+    assert isinstance(erro, LoginExpiradoError)
 
 
 from baixar_requisitorios import _ordenar_candidatos

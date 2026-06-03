@@ -527,14 +527,33 @@ async def _test_cdp_manual():
 async def _erro_iframe_ausente(page, numero_processo):
     """Decide qual exceção lançar quando o iframe de consulta não carrega.
 
-    Sessão expirada faz o portal redirecionar pra tela de login — o iframe
-    'consultaprocessual' some. Nesse caso retorna LoginExpiradoError (sinal pro
-    main() parar e salvar). Senão, RuntimeError (erro de navegação daquele processo).
+    Sessão expirada redireciona o portal: ou pra tela de login (campo de senha), ou
+    pro site PÚBLICO (www.tjrj.jus.br, SEM campo de senha). Nos dois casos a sessão
+    morreu => LoginExpiradoError (sinal pro main() parar limpo e salvar) em vez de
+    moer 10 erro_navegacao até o circuit breaker. Só é RuntimeError (erro recuperável
+    daquele processo) se a página AINDA está no portal mas o iframe não renderizou.
+
+    Também imprime um diagnóstico (url/senha/fora_portal) pra confirmar a causa das
+    quedas em produção.
     """
-    if await page.locator(seletores.INDICADOR_LOGIN_EXPIRADO).count() > 0:
-        return LoginExpiradoError(f"Sessão expirada ao consultar {numero_processo}")
+    try:
+        url = page.url
+    except Exception as e:
+        url = f"<page-inacessivel:{type(e).__name__}>"
+    try:
+        tem_senha = await page.locator(seletores.INDICADOR_LOGIN_EXPIRADO).count()
+    except Exception:
+        tem_senha = 0
+    # Saiu do portal = redirect de sessão expirada (público/login). Healthy goto fica
+    # em 'portalservicos'/'consultaprocessual'.
+    fora_do_portal = ("portalservicos" not in url) and ("consultaprocessual" not in url)
+    print(f"  [DIAG iframe-ausente] proc={numero_processo} url={url!r} "
+          f"senha={tem_senha} fora_portal={fora_do_portal}", flush=True)
+    if tem_senha > 0 or fora_do_portal:
+        return LoginExpiradoError(
+            f"Sessão expirada ao consultar {numero_processo} (url={url})")
     return RuntimeError(
-        f"Iframe interno '{seletores.INNER_FRAME_URL_FRAGMENT}' não encontrado"
+        f"Iframe interno '{seletores.INNER_FRAME_URL_FRAGMENT}' não encontrado (url={url})"
     )
 
 
@@ -668,6 +687,11 @@ async def _clicar_prolongar_sessao(context):
                         try:
                             await btn.first.evaluate("(el) => el.click()")
                             cliques += 1
+                            # Diagnóstico: marca a renovação REAL do modal de inatividade
+                            # (distingue de remoção de backdrop). Se a sessão cair sem
+                            # nenhuma destas nos minutos anteriores, o modal escapou.
+                            print("  [watchdog] modal 'sessao inativa' DETECTADO e renovado",
+                                  flush=True)
                             await asyncio.sleep(0.5)
                         except Exception:
                             pass
