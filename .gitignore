@@ -1,0 +1,24 @@
+# Perfil do navegador (grande, sessão local)
+user_data_chromium/
+
+# Caches Python / pytest
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Downloads temporários e saídas com PDFs
+_tmp_downloads/
+_test_downloads/
+manual_revisar/
+screenshots_erro/
+*.pdf
+
+# Checkpoints / estado / logs (dados transitórios e grandes)
+downloads_state.json
+downloads_state.json.bak
+saldos_checkpoint.json
+erros_consulta.csv
+erros_download.csv
+
+# Settings locais do Claude Code
+.claude/
