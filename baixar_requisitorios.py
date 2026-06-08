@@ -1465,8 +1465,12 @@ async def processar_processo(context, precatorios_do_processo, numero_processo,
                 pass
 
 
-async def _test_processar(numero):
-    """Pipeline completo de um processo de teste (lança Edge via pipe, igual ao main)."""
+async def _test_processar(numero, precatorios=None):
+    """Pipeline completo de um processo de teste (lança Edge via pipe, igual ao main).
+
+    `precatorios`: lista de precatórios-alvo reais (3º arg do CLI, separados por vírgula).
+    Quando passada, ATIVA o goal-stop — útil pra verificar a parada por objetivo ao vivo.
+    Sem ela, usa ["TESTE"] (goal-stop dormente, só early-stop/teto)."""
     pw = None
     context = None
     try:
@@ -1483,7 +1487,7 @@ async def _test_processar(numero):
         pasta_tmp = PROJETO_DIR / "_tmp_downloads"
         print(f"Processando {numero}...")
         resultado = await processar_processo(
-            context, precatorios_do_processo=["TESTE"],
+            context, precatorios_do_processo=(precatorios or ["TESTE"]),
             numero_processo=numero, pasta_saida=pasta_saida, pasta_tmp=pasta_tmp,
             debug=True,
         )
@@ -1812,7 +1816,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 2 and sys.argv[1] == "--test-consulta":
         asyncio.run(_test_consulta(sys.argv[2]))
     elif len(sys.argv) > 2 and sys.argv[1] == "--test-processar":
-        asyncio.run(_test_processar(sys.argv[2]))
+        precatorios = sys.argv[3].split(",") if len(sys.argv) > 3 else None
+        asyncio.run(_test_processar(sys.argv[2], precatorios))
     else:
         sys.exit(asyncio.run(main()))
         print("(main completo será implementado em task posterior)")
