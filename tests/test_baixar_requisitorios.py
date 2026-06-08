@@ -612,6 +612,7 @@ def test_processar_com_timeout_propaga_login_expirado(monkeypatch):
 from baixar_requisitorios import (
     eh_documento_requisitorio, eh_documento_vinculo,
     REGEX_OFREQ, REGEX_VINCULO, _indices_fallback, _faltam_vinculos,
+    _todos_resolvidos,
 )
 
 
@@ -634,6 +635,32 @@ def test_faltam_vinculos_ofreq_none_ignorado():
 
 def test_faltam_vinculos_lista_vazia_false():
     assert _faltam_vinculos([], {}) is False
+
+
+# ===== _todos_resolvidos =====
+def test_todos_resolvidos_lista_vazia_false():
+    assert _todos_resolvidos([], [{"ofreq": "2024.1"}], {"2024.1": "2025.10-0"}) is False
+
+def test_todos_resolvidos_completo_true():
+    reqs = [{"ofreq": "2024.1"}, {"ofreq": "2024.2"}]
+    vinc = {"2024.1": "2025.10-0", "2024.2": "2025.20-1"}
+    assert _todos_resolvidos(["2025.10-0", "2025.20-1"], reqs, vinc) is True
+
+def test_todos_resolvidos_parcial_false():
+    reqs = [{"ofreq": "2024.1"}]
+    vinc = {"2024.1": "2025.10-0", "2024.2": "2025.20-1"}
+    assert _todos_resolvidos(["2025.10-0", "2025.20-1"], reqs, vinc) is False
+
+def test_todos_resolvidos_modo_teste_false():
+    reqs = [{"ofreq": "2024.1"}]
+    vinc = {"2024.1": "2025.10-0"}
+    assert _todos_resolvidos(["TESTE"], reqs, vinc) is False
+
+def test_todos_resolvidos_vinculo_sem_requisitorio_false():
+    assert _todos_resolvidos(["2025.10-0"], [], {"2024.1": "2025.10-0"}) is False
+
+def test_todos_resolvidos_requisitorio_sem_vinculo_false():
+    assert _todos_resolvidos(["2025.10-0"], [{"ofreq": "2024.1"}], {}) is False
 
 
 # ===== precisa_processar: resume não re-lê o que já está no checkpoint =====
@@ -774,3 +801,41 @@ def test_baixar_indices_sem_parar_apos_misses_processa_tudo(monkeypatch):
         _FakeVisu(), [1, 2, 3, 4, 5], None, [], {}, set(),
         log=lambda m: None, numero_processo=None))
     assert processados == [1, 2, 3, 4, 5]
+
+
+def test_baixar_indices_goal_stop_para_ao_resolver(monkeypatch):
+    """Para assim que todos os precatórios-alvo ficam resolvidos (não lê o resto)."""
+    processados = []
+
+    async def fake_um(visualizador, el, idx, pasta_temp, requisitorios, vinculos, *a, **k):
+        processados.append(idx)
+        if idx == 10:
+            vinculos["2024.1"] = "2025.10-0"
+            requisitorios.append({"ofreq": "2024.1"})
+            return True
+        return False
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [10, 11, 12], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        precatorios_alvo=["2025.10-0"]))
+    assert processados == [10]  # parou logo após resolver o único alvo
+
+
+def test_baixar_indices_goal_stop_segue_se_falta_alvo(monkeypatch):
+    """Com 2 alvos e só 1 resolvido, NÃO para — segue lendo."""
+    processados = []
+
+    async def fake_um(visualizador, el, idx, pasta_temp, requisitorios, vinculos, *a, **k):
+        processados.append(idx)
+        if idx == 10:
+            vinculos["2024.1"] = "2025.10-0"
+            requisitorios.append({"ofreq": "2024.1"})
+            return True
+        return False
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [10, 11, 12], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        precatorios_alvo=["2025.10-0", "2025.20-1"]))
+    assert processados == [10, 11, 12]  # nunca resolveu o 2º alvo -> leu tudo

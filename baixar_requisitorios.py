@@ -1047,6 +1047,20 @@ def _faltam_vinculos(requisitorios, vinculos):
     return any(req.get("ofreq") and req["ofreq"] not in vinculos for req in requisitorios)
 
 
+def _todos_resolvidos(precatorios_alvo, requisitorios, vinculos):
+    """True quando todo precatório-alvo tem vínculo (OFREQ->precatório) E o
+    requisitório daquele OFREQ extraído (entrou em `requisitorios`).
+
+    precatorios_alvo vazio (ou só com valores que nunca casam, ex: ["TESTE"]) -> False,
+    pra não disparar goal-stop em modo de teste/sem alvos reais.
+    """
+    if not precatorios_alvo:
+        return False
+    ofreqs_req = {r["ofreq"] for r in requisitorios if r.get("ofreq")}
+    resolvidos = {vinculos[of] for of in vinculos if of in ofreqs_req}
+    return set(precatorios_alvo) <= resolvidos
+
+
 def _parece_escaneado(texto, minimo=40):
     """True se o PDF não tem texto extraível suficiente (provável imagem/scan).
 
@@ -1220,13 +1234,16 @@ async def _baixar_e_classificar_um(visualizador, el, idx, pasta_temp,
 
 async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
                                         requisitorios, vinculos, ofreqs_vistos,
-                                        log, numero_processo, parar_apos_misses=None):
+                                        log, numero_processo, parar_apos_misses=None,
+                                        precatorios_alvo=None):
     """Itera os índices baixando+classificando cada um. Muta os acumuladores.
 
+    goal-stop: se `precatorios_alvo` for dado e TODOS ficarem resolvidos
+    (vínculo + requisitório), para imediatamente.
+
     early-stop: se `parar_apos_misses` for dado, para depois de N downloads
-    consecutivos IRRELEVANTES *após já ter achado* o bloco de documentos do precatório
-    (no fallback do-fim-pra-frente, achados os requisitórios/vínculos, o resto da árvore
-    são petições antigas inúteis). Misses ANTES do primeiro achado não contam.
+    consecutivos IRRELEVANTES *após já ter achado* o bloco. Misses ANTES do primeiro
+    achado não contam. (backstop pro caso de alvo faltante/escaneado)
     """
     todos_nos = visualizador.locator(seletores.ARVORE_ITEM_TREEITEM)
     achou_relevante = False
@@ -1236,6 +1253,9 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
         relevante = await _baixar_e_classificar_um(
             visualizador, el, idx, pasta_temp,
             requisitorios, vinculos, ofreqs_vistos, log, numero_processo)
+        if precatorios_alvo and _todos_resolvidos(precatorios_alvo, requisitorios, vinculos):
+            log("  goal-stop: todos os precatórios-alvo resolvidos — parando")
+            break
         if relevante:
             achou_relevante = True
             misses_seguidos = 0
@@ -1246,7 +1266,8 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
                 break
 
 
-async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False, numero_processo=None):
+async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False,
+                                        numero_processo=None, precatorios_do_processo=None):
     """No visualizador, baixa as peças candidatas e as classifica:
     - requisitório (OFÍCIO REQUISITÓRIO) -> dados de beneficiário/advogado;
     - vínculo DEPRE/DEPJU ('gerou o precatório') -> mapa OFREQ -> precatório.
@@ -1301,7 +1322,8 @@ async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False, n
         await _baixar_e_classificar_indices(
             visualizador, indices2, pasta_temp,
             requisitorios, vinculos, ofreqs_vistos, log, numero_processo,
-            parar_apos_misses=seletores.FALLBACK_EARLY_STOP_MISSES)
+            parar_apos_misses=seletores.FALLBACK_EARLY_STOP_MISSES,
+            precatorios_alvo=precatorios_do_processo)
 
     log(f"total: {len(requisitorios)} requisitórios, {len(vinculos)} vínculos")
     return requisitorios, vinculos
@@ -1404,7 +1426,8 @@ async def processar_processo(context, precatorios_do_processo, numero_processo,
             await asyncio.sleep(1)
 
         requisitorios, vinculos = await _baixar_e_extrair_pecas_ofreq(
-            visu, pasta_tmp, debug=debug, numero_processo=numero_processo)
+            visu, pasta_tmp, debug=debug, numero_processo=numero_processo,
+            precatorios_do_processo=precatorios_do_processo)
         if not requisitorios:
             return {"status": "sem_requisitorio", "arquivos": [], "dados": {}}
 

@@ -134,11 +134,12 @@ LIMITE_CANDIDATOS = 50
 # (que já detecta OFREQ / "OFÍCIO REQUISITÓRIO" / "gerou o precatório").
 # Stems com e sem acento, pra tolerar variação de rendering no DOM.
 PADROES_DOC_GENERICO = ["Petiç", "Petic", "Documento", "Ofíci", "Ofici"]
-# Teto do fallback — cada candidato custa ~5-8s de clique+download. Como o fallback
-# varre do FIM da árvore (onde ficam os requisitórios/DEPJU), 30 alcança os alvos com
-# folga e cabe no deadline de 240s/processo. Processos genuinamente vazios pagam no
-# máximo este custo extra.
-LIMITE_FALLBACK_GENERICO = 30
+# Teto do fallback — cada candidato custa ~5-8s de clique+download. Com o goal-stop
+# (para assim que todos os precatórios-alvo do processo são resolvidos), no caso comum
+# o loop para muito antes; este teto só limita o PIOR caso (alvo realmente ausente ou
+# escaneado). Como o fallback varre do FIM da árvore (onde ficam os requisitórios/DEPJU),
+# 15 alcança os alvos com folga e corta o desperdício pela metade vs. o antigo 30.
+LIMITE_FALLBACK_GENERICO = 15
 
 # Early-stop do fallback: no 0110128, os requisitórios/DEPJU formam um BLOCO contíguo no
 # fim da árvore; depois deles só há petições antigas inúteis. Após ACHAR o bloco, se
