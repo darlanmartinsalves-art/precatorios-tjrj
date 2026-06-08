@@ -801,3 +801,41 @@ def test_baixar_indices_sem_parar_apos_misses_processa_tudo(monkeypatch):
         _FakeVisu(), [1, 2, 3, 4, 5], None, [], {}, set(),
         log=lambda m: None, numero_processo=None))
     assert processados == [1, 2, 3, 4, 5]
+
+
+def test_baixar_indices_goal_stop_para_ao_resolver(monkeypatch):
+    """Para assim que todos os precatórios-alvo ficam resolvidos (não lê o resto)."""
+    processados = []
+
+    async def fake_um(visualizador, el, idx, pasta_temp, requisitorios, vinculos, *a, **k):
+        processados.append(idx)
+        if idx == 10:
+            vinculos["2024.1"] = "2025.10-0"
+            requisitorios.append({"ofreq": "2024.1"})
+            return True
+        return False
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [10, 11, 12], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        precatorios_alvo=["2025.10-0"]))
+    assert processados == [10]  # parou logo após resolver o único alvo
+
+
+def test_baixar_indices_goal_stop_segue_se_falta_alvo(monkeypatch):
+    """Com 2 alvos e só 1 resolvido, NÃO para — segue lendo."""
+    processados = []
+
+    async def fake_um(visualizador, el, idx, pasta_temp, requisitorios, vinculos, *a, **k):
+        processados.append(idx)
+        if idx == 10:
+            vinculos["2024.1"] = "2025.10-0"
+            requisitorios.append({"ofreq": "2024.1"})
+            return True
+        return False
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [10, 11, 12], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        precatorios_alvo=["2025.10-0", "2025.20-1"]))
+    assert processados == [10, 11, 12]  # nunca resolveu o 2º alvo -> leu tudo

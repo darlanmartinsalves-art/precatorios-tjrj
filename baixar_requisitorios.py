@@ -1234,13 +1234,16 @@ async def _baixar_e_classificar_um(visualizador, el, idx, pasta_temp,
 
 async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
                                         requisitorios, vinculos, ofreqs_vistos,
-                                        log, numero_processo, parar_apos_misses=None):
+                                        log, numero_processo, parar_apos_misses=None,
+                                        precatorios_alvo=None):
     """Itera os índices baixando+classificando cada um. Muta os acumuladores.
 
+    goal-stop: se `precatorios_alvo` for dado e TODOS ficarem resolvidos
+    (vínculo + requisitório), para imediatamente.
+
     early-stop: se `parar_apos_misses` for dado, para depois de N downloads
-    consecutivos IRRELEVANTES *após já ter achado* o bloco de documentos do precatório
-    (no fallback do-fim-pra-frente, achados os requisitórios/vínculos, o resto da árvore
-    são petições antigas inúteis). Misses ANTES do primeiro achado não contam.
+    consecutivos IRRELEVANTES *após já ter achado* o bloco. Misses ANTES do primeiro
+    achado não contam. (backstop pro caso de alvo faltante/escaneado)
     """
     todos_nos = visualizador.locator(seletores.ARVORE_ITEM_TREEITEM)
     achou_relevante = False
@@ -1250,6 +1253,9 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
         relevante = await _baixar_e_classificar_um(
             visualizador, el, idx, pasta_temp,
             requisitorios, vinculos, ofreqs_vistos, log, numero_processo)
+        if precatorios_alvo and _todos_resolvidos(precatorios_alvo, requisitorios, vinculos):
+            log("  goal-stop: todos os precatórios-alvo resolvidos — parando")
+            break
         if relevante:
             achou_relevante = True
             misses_seguidos = 0
