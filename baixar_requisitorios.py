@@ -1266,7 +1266,8 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
                 break
 
 
-async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False, numero_processo=None):
+async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False,
+                                        numero_processo=None, precatorios_do_processo=None):
     """No visualizador, baixa as peças candidatas e as classifica:
     - requisitório (OFÍCIO REQUISITÓRIO) -> dados de beneficiário/advogado;
     - vínculo DEPRE/DEPJU ('gerou o precatório') -> mapa OFREQ -> precatório.
@@ -1321,7 +1322,8 @@ async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False, n
         await _baixar_e_classificar_indices(
             visualizador, indices2, pasta_temp,
             requisitorios, vinculos, ofreqs_vistos, log, numero_processo,
-            parar_apos_misses=seletores.FALLBACK_EARLY_STOP_MISSES)
+            parar_apos_misses=seletores.FALLBACK_EARLY_STOP_MISSES,
+            precatorios_alvo=precatorios_do_processo)
 
     log(f"total: {len(requisitorios)} requisitórios, {len(vinculos)} vínculos")
     return requisitorios, vinculos
@@ -1424,7 +1426,8 @@ async def processar_processo(context, precatorios_do_processo, numero_processo,
             await asyncio.sleep(1)
 
         requisitorios, vinculos = await _baixar_e_extrair_pecas_ofreq(
-            visu, pasta_tmp, debug=debug, numero_processo=numero_processo)
+            visu, pasta_tmp, debug=debug, numero_processo=numero_processo,
+            precatorios_do_processo=precatorios_do_processo)
         if not requisitorios:
             return {"status": "sem_requisitorio", "arquivos": [], "dados": {}}
 
