@@ -1047,6 +1047,20 @@ def _faltam_vinculos(requisitorios, vinculos):
     return any(req.get("ofreq") and req["ofreq"] not in vinculos for req in requisitorios)
 
 
+def _todos_resolvidos(precatorios_alvo, requisitorios, vinculos):
+    """True quando todo precatório-alvo tem vínculo (OFREQ->precatório) E o
+    requisitório daquele OFREQ extraído (entrou em `requisitorios`).
+
+    precatorios_alvo vazio (ou só com valores que nunca casam, ex: ["TESTE"]) -> False,
+    pra não disparar goal-stop em modo de teste/sem alvos reais.
+    """
+    if not precatorios_alvo:
+        return False
+    ofreqs_req = {r["ofreq"] for r in requisitorios if r.get("ofreq")}
+    resolvidos = {vinculos[of] for of in vinculos if of in ofreqs_req}
+    return set(precatorios_alvo) <= resolvidos
+
+
 def _parece_escaneado(texto, minimo=40):
     """True se o PDF não tem texto extraível suficiente (provável imagem/scan).
 

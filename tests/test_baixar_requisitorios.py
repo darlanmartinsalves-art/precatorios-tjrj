@@ -612,6 +612,7 @@ def test_processar_com_timeout_propaga_login_expirado(monkeypatch):
 from baixar_requisitorios import (
     eh_documento_requisitorio, eh_documento_vinculo,
     REGEX_OFREQ, REGEX_VINCULO, _indices_fallback, _faltam_vinculos,
+    _todos_resolvidos,
 )
 
 
@@ -634,6 +635,32 @@ def test_faltam_vinculos_ofreq_none_ignorado():
 
 def test_faltam_vinculos_lista_vazia_false():
     assert _faltam_vinculos([], {}) is False
+
+
+# ===== _todos_resolvidos =====
+def test_todos_resolvidos_lista_vazia_false():
+    assert _todos_resolvidos([], [{"ofreq": "2024.1"}], {"2024.1": "2025.10-0"}) is False
+
+def test_todos_resolvidos_completo_true():
+    reqs = [{"ofreq": "2024.1"}, {"ofreq": "2024.2"}]
+    vinc = {"2024.1": "2025.10-0", "2024.2": "2025.20-1"}
+    assert _todos_resolvidos(["2025.10-0", "2025.20-1"], reqs, vinc) is True
+
+def test_todos_resolvidos_parcial_false():
+    reqs = [{"ofreq": "2024.1"}]
+    vinc = {"2024.1": "2025.10-0", "2024.2": "2025.20-1"}
+    assert _todos_resolvidos(["2025.10-0", "2025.20-1"], reqs, vinc) is False
+
+def test_todos_resolvidos_modo_teste_false():
+    reqs = [{"ofreq": "2024.1"}]
+    vinc = {"2024.1": "2025.10-0"}
+    assert _todos_resolvidos(["TESTE"], reqs, vinc) is False
+
+def test_todos_resolvidos_vinculo_sem_requisitorio_false():
+    assert _todos_resolvidos(["2025.10-0"], [], {"2024.1": "2025.10-0"}) is False
+
+def test_todos_resolvidos_requisitorio_sem_vinculo_false():
+    assert _todos_resolvidos(["2025.10-0"], [{"ofreq": "2024.1"}], {}) is False
 
 
 # ===== precisa_processar: resume não re-lê o que já está no checkpoint =====
