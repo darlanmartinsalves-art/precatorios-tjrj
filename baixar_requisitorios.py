@@ -1061,6 +1061,18 @@ def _todos_resolvidos(precatorios_alvo, requisitorios, vinculos):
     return set(precatorios_alvo) <= resolvidos
 
 
+def _ha_alvos_reais(precatorios_alvo):
+    """True quando há precatórios-alvo CONCRETOS a resolver (não vazio e não o
+    sentinel ["TESTE"] do --test-processar sem 3º arg).
+
+    Quando há alvos reais, o early-stop por misses é SUPRIMIDO: cortar por misses
+    garantiria perder um requisitório que ainda falta (ex: ofício rotulado pelo nome
+    do beneficiário, "Def Roberto" — não casa nenhum padrão de rótulo). Quem para é o
+    goal-stop (todos os alvos resolvidos), com o teto do fallback como backstop.
+    """
+    return bool(precatorios_alvo) and set(precatorios_alvo) != {"TESTE"}
+
+
 def _parece_escaneado(texto, minimo=40):
     """True se o PDF não tem texto extraível suficiente (provável imagem/scan).
 
@@ -1248,6 +1260,9 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
     todos_nos = visualizador.locator(seletores.ARVORE_ITEM_TREEITEM)
     achou_relevante = False
     misses_seguidos = 0
+    # Com alvos reais conhecidos, o early-stop é suprimido (cortar por misses perderia
+    # um requisitório que ainda falta). Quem para é o goal-stop; o teto da lista é o backstop.
+    early_stop_ativo = parar_apos_misses is not None and not _ha_alvos_reais(precatorios_alvo)
     for idx in indices:
         el = todos_nos.nth(idx)
         relevante = await _baixar_e_classificar_um(
@@ -1259,9 +1274,9 @@ async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,
         if relevante:
             achou_relevante = True
             misses_seguidos = 0
-        elif achou_relevante:
+        elif achou_relevante and early_stop_ativo:
             misses_seguidos += 1
-            if parar_apos_misses is not None and misses_seguidos >= parar_apos_misses:
+            if misses_seguidos >= parar_apos_misses:
                 log(f"  early-stop: {misses_seguidos} downloads irrelevantes após o bloco — parando")
                 break
 
@@ -1309,9 +1324,13 @@ async def _baixar_e_extrair_pecas_ofreq(visualizador, pasta_temp, debug=False,
     # como "Petição" genérica no FIM da árvore — senão o requisitório vira SEM_VINCULO).
     if not requisitorios or _faltam_vinculos(requisitorios, vinculos):
         log("passo 2 (fallback): requisitório sem rótulo ou vínculo faltando — varrendo do fim")
-        # Só FOLHAS (documentos reais), sem os nós-pai de juntada — senão metade dos
-        # downloads é o MESMO PDF (duplicata) e o teto se esgota antes de alcançar o alvo.
-        ordem_g = await _buscar_indices_leaves(visualizador, seletores.PADROES_DOC_GENERICO)
+        # TODAS as FOLHAS (documentos reais), sem os nós-pai de juntada — senão metade
+        # dos downloads é o MESMO PDF (duplicata) e o teto se esgota antes do alvo.
+        # NÃO filtramos por rótulo: o nome do nó VARIA por cartório (ex: "Def Roberto",
+        # o nome do beneficiário) e não casa nenhum padrão fixo → o conteúdo do PDF é
+        # quem classifica (eh_documento_requisitorio / eh_documento_vinculo). Lendo do
+        # fim + goal-stop, alcançamos os alvos nos primeiros downloads.
+        ordem_g = await _buscar_indices_leaves(visualizador, [""])  # [""] casa toda folha
         # Varrer do FIM da árvore pra frente: os requisitórios e ofícios DEPJU dos
         # precatórios ficam entre os eventos MAIS RECENTES (informação do usuário,
         # confirmada no 0110128 — eventos ~661-684 no fim). Assim alcançamos os alvos

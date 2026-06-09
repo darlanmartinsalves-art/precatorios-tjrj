@@ -839,3 +839,62 @@ def test_baixar_indices_goal_stop_segue_se_falta_alvo(monkeypatch):
         log=lambda m: None, numero_processo=None,
         precatorios_alvo=["2025.10-0", "2025.20-1"]))
     assert processados == [10, 11, 12]  # nunca resolveu o 2º alvo -> leu tudo
+
+
+# ===== _ha_alvos_reais: distingue alvos concretos do sentinel de teste =====
+from baixar_requisitorios import _ha_alvos_reais
+
+
+def test_ha_alvos_reais_lista_concreta_true():
+    assert _ha_alvos_reais(["2025.10-0", "2025.20-1"]) is True
+
+
+def test_ha_alvos_reais_vazio_false():
+    assert _ha_alvos_reais([]) is False
+
+
+def test_ha_alvos_reais_none_false():
+    assert _ha_alvos_reais(None) is False
+
+
+def test_ha_alvos_reais_sentinel_teste_false():
+    assert _ha_alvos_reais(["TESTE"]) is False
+
+
+# ===== Com alvos reais, o early-stop é SUPRIMIDO =====
+# Bug (0090006-26.2015): o ofício requisitório estava rotulado "Def Roberto" (variação
+# do nome do beneficiário). Com alvos conhecidos, parar por misses GARANTE perder o
+# requisitório que ainda falta — quem deve parar é só o goal-stop (com o teto de
+# backstop). Por isso, quando há alvos reais, early-stop não dispara.
+def test_baixar_indices_alvos_reais_ignoram_early_stop(monkeypatch):
+    """Com alvos reais e parar_apos_misses setado, NÃO para por misses — lê tudo
+    (o alvo nunca resolve aqui; goal-stop não dispara; teto/lista é o limite)."""
+    relev = {1: True, 2: False, 3: False, 4: False, 5: False, 6: False}
+    processados = []
+
+    async def fake_um(visualizador, el, idx, *a, **k):
+        processados.append(idx)
+        return relev[idx]
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [1, 2, 3, 4, 5, 6], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        parar_apos_misses=2, precatorios_alvo=["2025.99-9"]))
+    assert processados == [1, 2, 3, 4, 5, 6]  # early-stop suprimido por haver alvo real
+
+
+def test_baixar_indices_sem_alvos_reais_early_stop_vale(monkeypatch):
+    """Sem alvos reais (sentinel TESTE), o early-stop continua valendo."""
+    relev = {1: True, 2: False, 3: False, 4: False, 5: False}
+    processados = []
+
+    async def fake_um(visualizador, el, idx, *a, **k):
+        processados.append(idx)
+        return relev[idx]
+    monkeypatch.setattr(_br_timeout, "_baixar_e_classificar_um", fake_um)
+    asyncio.run(_br_timeout._baixar_e_classificar_indices(
+        _FakeVisu(), [1, 2, 3, 4, 5], None, [], {}, set(),
+        log=lambda m: None, numero_processo=None,
+        parar_apos_misses=2, precatorios_alvo=["TESTE"]))
+    # 1(T,reset) 2(m1) 3(m2->stop). 4,5 não processados.
+    assert processados == [1, 2, 3]
