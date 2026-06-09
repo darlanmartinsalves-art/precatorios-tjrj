@@ -150,6 +150,13 @@ LIMITE_FALLBACK_GENERICO = 25
 # cortar cedo demais.
 FALLBACK_EARLY_STOP_MISSES = 8
 
+# Contêiner do texto renderizado na PRÉVIA do visualizador (ng2-pdf-viewer / PDF.js).
+# Descoberto no spike 2026-06-09 (processo 0090006): o documento exibido renderiza em
+# div.textLayer > span (selecionável). Lendo esse texto dá pra CLASSIFICAR o documento
+# (requisitório / vínculo DEPJU) SEM baixar o PDF. Pode haver mais de uma .page → ler
+# TODAS as ocorrências e concatenar. Vive no próprio frame visproc (sem iframe aninhado).
+SELETOR_PREVIA_TEXTO = "div.textLayer"
+
 # Botão de download — pega apenas a peça em exibição
 BOTAO_SALVAR_COPIA = 'button[aria-label="Salvar Cópia do Documento em Exibição"]'
 
