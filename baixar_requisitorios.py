@@ -142,13 +142,17 @@ def extrair_advogado(pdf_bytes):
 REGEX_OFREQ = re.compile(r"(\d{4}\.\d+)\s*/\s*OFREQ", re.IGNORECASE)
 
 
-def extrair_numero_ofreq(pdf_bytes):
-    """Extrai o número OFREQ (ex: '2025.14235') do texto do PDF, ou None."""
-    texto = _extrair_texto_pdf(pdf_bytes)
+def extrair_numero_ofreq_de_texto(texto):
+    """Extrai o número OFREQ (ex: '2025.14235') de um texto já extraído, ou None."""
     if not texto:
         return None
     m = REGEX_OFREQ.search(texto)
     return m.group(1) if m else None
+
+
+def extrair_numero_ofreq(pdf_bytes):
+    """Extrai o número OFREQ do texto do PDF, ou None. (delega ao por-texto)"""
+    return extrair_numero_ofreq_de_texto(_extrair_texto_pdf(pdf_bytes))
 
 
 REGEX_VINCULO = re.compile(
@@ -158,17 +162,17 @@ REGEX_VINCULO = re.compile(
 )
 
 
-def extrair_vinculo_ofreq_precatorio(pdf_bytes):
-    """Do ofício DEPRE/DEPJU, retorna (ofreq, precatorio) ou None.
-
-    Ex: 'Ofício 2025.06478/OFREQ ... gerou o precatório 2025.06209-0'
-        -> ('2025.06478', '2025.06209-0')
-    """
-    texto = _extrair_texto_pdf(pdf_bytes)
+def extrair_vinculo_ofreq_precatorio_de_texto(texto):
+    """De um texto já extraído do ofício DEPRE/DEPJU, retorna (ofreq, precatorio) ou None."""
     if not texto:
         return None
     m = REGEX_VINCULO.search(texto)
     return (m.group(1), m.group(2)) if m else None
+
+
+def extrair_vinculo_ofreq_precatorio(pdf_bytes):
+    """Do ofício DEPRE/DEPJU (bytes), retorna (ofreq, precatorio) ou None. (delega ao por-texto)"""
+    return extrair_vinculo_ofreq_precatorio_de_texto(_extrair_texto_pdf(pdf_bytes))
 
 
 REGEX_EH_REQUISITORIO = re.compile(r"OF[ÍI]CIO\s+REQUISIT[ÓO]RIO", re.IGNORECASE)
@@ -1148,16 +1152,103 @@ async def _buscar_indices_leaves(visualizador, padroes):
     return await visualizador.evaluate(_JS_BUSCAR_LEAVES, padroes)
 
 
+async def _ler_texto_previa(visualizador, timeout_ms=6000):
+    """Lê o texto renderizado na PRÉVIA (ng2-pdf-viewer / div.textLayer), SEM baixar.
+    Concatena todas as .textLayer (pode haver mais de uma .page). Retorna "" se não
+    renderizou texto (imagem/scan) ou ainda não carregou."""
+    loc = visualizador.locator(seletores.SELETOR_PREVIA_TEXTO)
+    try:
+        await loc.first.wait_for(state="attached", timeout=timeout_ms)
+    except Exception:
+        return ""
+    for _ in range(6):
+        try:
+            partes = await loc.all_inner_texts()
+        except Exception:
+            partes = []
+        texto = "\n".join(p for p in partes if p).strip()
+        if texto:
+            return texto
+        await asyncio.sleep(0.5)
+    return ""
+
+
+async def _baixar_pdf_apos_clique(visualizador, idx, pasta_temp, log):
+    """O nó já foi clicado e exibido: baixa o PDF. Retorna (pdf_bytes, tmp_path) ou
+    (None, None) se não baixou."""
+    botao_salvar = visualizador.locator(seletores.BOTAO_SALVAR_COPIA).first
+    try:
+        await botao_salvar.wait_for(state="visible", timeout=5000)
+    except Exception:
+        log("  botao Salvar Copia nao apareceu — pulando")
+        return None, None
+    try:
+        async with visualizador.expect_download(timeout=30000) as dl_info:
+            await botao_salvar.evaluate("(el) => el.click()")
+        download = await dl_info.value
+        tmp_path = pasta_temp / f"_cand_{idx}_{download.suggested_filename}"
+        await download.save_as(tmp_path)
+        log(f"  baixado: {tmp_path.stat().st_size} bytes")
+        return tmp_path.read_bytes(), tmp_path
+    except Exception as e:
+        log(f"  erro download: {str(e)[:120]}")
+        return None, None
+
+
+def _coletar_pdf_baixado(pdf_bytes, tmp_path, pasta_temp, requisitorios, vinculos,
+                         ofreqs_vistos, log, numero_processo):
+    """Classifica um PDF JÁ baixado e muta os acumuladores. Move scan/requisitório-sem-
+    beneficiário p/ manual_revisar. Retorna True se relevante (requisitório/vínculo)."""
+    texto = _extrair_texto_pdf(pdf_bytes)
+    if _parece_escaneado(texto):
+        pasta_manual = pasta_temp.parent / "manual_revisar"
+        pasta_manual.mkdir(parents=True, exist_ok=True)
+        prefixo = f"{numero_processo}_" if numero_processo else ""
+        tmp_path.replace(pasta_manual / f"{prefixo}{tmp_path.name}")
+        log("  PDF sem texto (provável scan) — manual_revisar")
+        return False
+    if eh_documento_vinculo(texto):
+        v = extrair_vinculo_ofreq_precatorio_de_texto(texto)
+        if v:
+            vinculos[v[0]] = v[1]
+            log(f"  vínculo (PDF): OFREQ {v[0]} -> precatório {v[1]}")
+        tmp_path.unlink(missing_ok=True)
+        return True
+    if not eh_documento_requisitorio(texto):
+        log("  PDF não é requisitório nem vínculo — descartando")
+        tmp_path.unlink(missing_ok=True)
+        return False
+    ofreq = extrair_numero_ofreq_de_texto(texto)
+    if ofreq and ofreq in ofreqs_vistos:
+        log(f"  requisitório OFREQ {ofreq} repetido — descartando")
+        tmp_path.unlink(missing_ok=True)
+        return True
+    benef = extrair_beneficiario_completo(pdf_bytes)
+    if benef is None:
+        pasta_manual = pasta_temp.parent / "manual_revisar"
+        pasta_manual.mkdir(parents=True, exist_ok=True)
+        tmp_path.replace(pasta_manual / tmp_path.name)
+        log("  beneficiário não extraído — manual_revisar")
+        return True
+    adv = extrair_advogado(pdf_bytes)
+    if ofreq:
+        ofreqs_vistos.add(ofreq)
+    requisitorios.append({
+        "ofreq": ofreq, "beneficiario": benef, "advogado": adv,
+        "pdf_path": tmp_path, "pdf_bytes": pdf_bytes,
+    })
+    log(f"  requisitório coletado: OFREQ {ofreq} benef={benef['nome']}")
+    return True
+
+
 async def _baixar_e_classificar_um(visualizador, el, idx, pasta_temp,
                                    requisitorios, vinculos, ofreqs_vistos,
                                    log, numero_processo):
-    """Baixa e classifica UM nó da árvore. Muta requisitorios/vinculos/ofreqs_vistos.
-
-    Retorna True se o documento é RELEVANTE (requisitório ou vínculo pelo conteúdo —
-    mesmo que duplicado/escaneado-falho), o que indica que ainda estamos no bloco de
-    documentos do precatório. Retorna False para não-baixou / scan / 'não é nenhum dos
-    dois'. Esse sinal alimenta o early-stop do loop.
-    """
+    """Clica UM nó, classifica pela PRÉVIA (sem baixar):
+      - vínculo  -> extrai OFREQ->precatório do texto da prévia, SEM baixar;
+      - requisitório -> BAIXA o PDF e extrai beneficiário/advogado;
+      - prévia vazia/imagem -> FALLBACK: baixa e classifica pelo PDF.
+    Muta os acumuladores. Retorna True se o nó é relevante (requisitório/vínculo)."""
     try:
         try:
             rotulo = (await el.inner_text())[:70].replace("\n", " ").strip()
@@ -1167,81 +1258,34 @@ async def _baixar_e_classificar_um(visualizador, el, idx, pasta_temp,
         await el.evaluate("(e) => e.scrollIntoView({block: 'center'})")
         await asyncio.sleep(0.5)
         await el.click(force=True, timeout=10000)
-        await asyncio.sleep(4)
+        await asyncio.sleep(2)
     except Exception as e:
         log(f"  click falhou: {str(e)[:120]}")
         return False
 
-    botao_salvar = visualizador.locator(seletores.BOTAO_SALVAR_COPIA).first
-    try:
-        await botao_salvar.wait_for(state="visible", timeout=5000)
-    except Exception:
-        log(f"  botao Salvar Copia nao apareceu — pulando")
-        return False
+    texto_previa = await _ler_texto_previa(visualizador)
 
-    try:
-        async with visualizador.expect_download(timeout=30000) as dl_info:
-            await botao_salvar.evaluate("(el) => el.click()")
-        download = await dl_info.value
-        tmp_path = pasta_temp / f"_cand_{idx}_{download.suggested_filename}"
-        await download.save_as(tmp_path)
-        pdf_bytes = tmp_path.read_bytes()
-        texto = _extrair_texto_pdf(pdf_bytes)
-        log(f"  baixado: {tmp_path.stat().st_size} bytes")
-
-        # PDF sem texto extraível = provável scan -> revisão manual
-        if _parece_escaneado(texto):
-            pasta_manual = pasta_temp.parent / "manual_revisar"
-            pasta_manual.mkdir(parents=True, exist_ok=True)
-            prefixo = f"{numero_processo}_" if numero_processo else ""
-            tmp_path.replace(pasta_manual / f"{prefixo}{tmp_path.name}")
-            log(f"  PDF sem texto (provável scan) — manual_revisar")
-            return False
-
-        # Documento de vínculo DEPRE/DEPJU: OFREQ -> precatório
-        if eh_documento_vinculo(texto):
-            v = extrair_vinculo_ofreq_precatorio(pdf_bytes)
+    if texto_previa:
+        if eh_documento_vinculo(texto_previa):
+            v = extrair_vinculo_ofreq_precatorio_de_texto(texto_previa)
             if v:
                 vinculos[v[0]] = v[1]
-                log(f"  vínculo: OFREQ {v[0]} -> precatório {v[1]}")
-            tmp_path.unlink(missing_ok=True)  # não é entregável
+                log(f"  vínculo (prévia): OFREQ {v[0]} -> precatório {v[1]}")
             return True
+        if eh_documento_requisitorio(texto_previa):
+            pdf_bytes, tmp_path = await _baixar_pdf_apos_clique(visualizador, idx, pasta_temp, log)
+            if not pdf_bytes:
+                return False
+            return _coletar_pdf_baixado(pdf_bytes, tmp_path, pasta_temp, requisitorios,
+                                        vinculos, ofreqs_vistos, log, numero_processo)
+        return False  # prévia textual mas nem vínculo nem requisitório
 
-        # Não é requisitório -> descartar
-        if not eh_documento_requisitorio(texto):
-            log(f"  PDF não é requisitório nem vínculo — descartando")
-            tmp_path.unlink(missing_ok=True)
-            return False
-
-        # Requisitório: dedup por OFREQ
-        ofreq = extrair_numero_ofreq(pdf_bytes)
-        if ofreq and ofreq in ofreqs_vistos:
-            log(f"  requisitório OFREQ {ofreq} repetido — descartando")
-            tmp_path.unlink(missing_ok=True)
-            return True  # ainda é um requisitório (bloco do precatório)
-
-        benef = extrair_beneficiario_completo(pdf_bytes)
-        if benef is None:
-            pasta_manual = pasta_temp.parent / "manual_revisar"
-            pasta_manual.mkdir(parents=True, exist_ok=True)
-            tmp_path.replace(pasta_manual / tmp_path.name)
-            log(f"  beneficiário não extraído — manual_revisar")
-            return True  # é requisitório, só não extraiu — segue no bloco
-        adv = extrair_advogado(pdf_bytes)
-        if ofreq:
-            ofreqs_vistos.add(ofreq)
-        requisitorios.append({
-            "ofreq": ofreq,
-            "beneficiario": benef,
-            "advogado": adv,
-            "pdf_path": tmp_path,
-            "pdf_bytes": pdf_bytes,
-        })
-        log(f"  requisitório coletado: OFREQ {ofreq} benef={benef['nome']}")
-        return True
-    except Exception as e:
-        log(f"  erro download/parse: {e}")
+    # Prévia vazia/imagem -> fallback Abordagem 1: baixa e classifica pelo PDF.
+    pdf_bytes, tmp_path = await _baixar_pdf_apos_clique(visualizador, idx, pasta_temp, log)
+    if not pdf_bytes:
         return False
+    return _coletar_pdf_baixado(pdf_bytes, tmp_path, pasta_temp, requisitorios,
+                                vinculos, ofreqs_vistos, log, numero_processo)
 
 
 async def _baixar_e_classificar_indices(visualizador, indices, pasta_temp,

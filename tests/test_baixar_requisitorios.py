@@ -898,3 +898,107 @@ def test_baixar_indices_sem_alvos_reais_early_stop_vale(monkeypatch):
         parar_apos_misses=2, precatorios_alvo=["TESTE"]))
     # 1(T,reset) 2(m1) 3(m2->stop). 4,5 não processados.
     assert processados == [1, 2, 3]
+
+
+# ===== Extratores por TEXTO (classificação pela prévia, sem baixar) =====
+from baixar_requisitorios import (
+    extrair_numero_ofreq_de_texto,
+    extrair_vinculo_ofreq_precatorio_de_texto,
+)
+
+_TXT_REQ = "Definitivo OFÍCIO Nº: 2024.16127/OFREQ\nOFÍCIO REQUISITÓRIO DE PAGAMENTO"
+_TXT_VINC = ("Ofício 2025.10413/OFREQ foi analisado pelo processo de análise "
+             "00015568/2025 e gerou o precatório 2025.16841-6")
+
+
+def test_extrair_numero_ofreq_de_texto_acha():
+    assert extrair_numero_ofreq_de_texto(_TXT_REQ) == "2024.16127"
+
+
+def test_extrair_numero_ofreq_de_texto_vazio_none():
+    assert extrair_numero_ofreq_de_texto("") is None
+    assert extrair_numero_ofreq_de_texto("nada aqui") is None
+
+
+def test_extrair_vinculo_de_texto_acha_par():
+    assert extrair_vinculo_ofreq_precatorio_de_texto(_TXT_VINC) == ("2025.10413", "2025.16841-6")
+
+
+def test_extrair_vinculo_de_texto_vazio_none():
+    assert extrair_vinculo_ofreq_precatorio_de_texto("") is None
+    assert extrair_vinculo_ofreq_precatorio_de_texto("texto sem vinculo") is None
+
+
+def test_extrair_numero_ofreq_bytes_ainda_funciona(pdf_modelo_bytes):
+    from baixar_requisitorios import extrair_numero_ofreq
+    r = extrair_numero_ofreq(pdf_modelo_bytes)
+    assert r is None or isinstance(r, str)
+
+
+# ===== Classificação por nó via PRÉVIA (Abordagem 2) =====
+import tempfile
+from pathlib import Path as _Path
+
+
+class _ElClique:
+    def __init__(self, rotulo="x"): self._r = rotulo
+    async def evaluate(self, *a, **k): return None
+    async def click(self, *a, **k): return None
+    async def inner_text(self): return self._r
+
+
+def _tmp_pasta():
+    return _Path(tempfile.mkdtemp())
+
+
+def test_classificar_um_vinculo_pela_previa_nao_baixa(monkeypatch):
+    """Prévia classifica como vínculo -> extrai do TEXTO, NÃO baixa."""
+    baixou = {"n": 0}
+    async def fake_previa(visu, **k):
+        return "Ofício 2025.10413/OFREQ foi analisado e gerou o precatório 2025.16841-6"
+    async def fake_baixar(*a, **k):
+        baixou["n"] += 1
+        return b"PDF", _Path("x.pdf")
+    monkeypatch.setattr(_br_timeout, "_ler_texto_previa", fake_previa)
+    monkeypatch.setattr(_br_timeout, "_baixar_pdf_apos_clique", fake_baixar)
+    vinculos = {}
+    rel = asyncio.run(_br_timeout._baixar_e_classificar_um(
+        _FakeVisu(), _ElClique("903 - Petição"), 903, _tmp_pasta(), [], vinculos, set(),
+        log=lambda m: None, numero_processo=None))
+    assert vinculos == {"2025.10413": "2025.16841-6"}
+    assert baixou["n"] == 0
+    assert rel is True
+
+
+def test_classificar_um_requisitorio_pela_previa_baixa(monkeypatch, pdf_modelo_bytes):
+    """Prévia classifica como requisitório -> BAIXA o PDF e coleta beneficiário."""
+    chamado = {"baixou": 0}
+    async def fake_previa(visu, **k):
+        return "OFÍCIO REQUISITÓRIO DE PAGAMENTO\nDefinitivo OFÍCIO Nº: 2024.16127/OFREQ"
+    async def fake_baixar(visu, idx, pasta_temp, log):
+        chamado["baixou"] += 1
+        return pdf_modelo_bytes, pasta_temp / f"_cand_{idx}.pdf"
+    monkeypatch.setattr(_br_timeout, "_ler_texto_previa", fake_previa)
+    monkeypatch.setattr(_br_timeout, "_baixar_pdf_apos_clique", fake_baixar)
+    reqs = []
+    rel = asyncio.run(_br_timeout._baixar_e_classificar_um(
+        _FakeVisu(), _ElClique("654 - Fulano Def"), 654, _tmp_pasta(), reqs, {}, set(),
+        log=lambda m: None, numero_processo="0090006-26.2015.8.19.0001"))
+    assert rel is True
+    assert chamado["baixou"] == 1
+    assert len(reqs) == 1
+
+
+def test_classificar_um_previa_vazia_cai_no_download(monkeypatch, pdf_modelo_bytes):
+    """Prévia vazia/imagem -> fallback: baixa e classifica pelo PDF."""
+    async def fake_previa(visu, **k):
+        return ""
+    async def fake_baixar(visu, idx, pasta_temp, log):
+        return pdf_modelo_bytes, pasta_temp / f"_cand_{idx}.pdf"
+    monkeypatch.setattr(_br_timeout, "_ler_texto_previa", fake_previa)
+    monkeypatch.setattr(_br_timeout, "_baixar_pdf_apos_clique", fake_baixar)
+    reqs = []
+    asyncio.run(_br_timeout._baixar_e_classificar_um(
+        _FakeVisu(), _ElClique("570 - Def Roberto"), 570, _tmp_pasta(), reqs, {}, set(),
+        log=lambda m: None, numero_processo="0090006-26.2015.8.19.0001"))
+    assert len(reqs) == 1

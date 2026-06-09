@@ -139,9 +139,10 @@ PADROES_DOC_GENERICO = ["Petiç", "Petic", "Documento", "Ofíci", "Ofici"]
 # o loop para muito antes; este teto só limita o PIOR caso (alvo realmente ausente ou
 # escaneado). O fallback agora varre TODAS as folhas do FIM da árvore (sem filtrar por
 # rótulo — o nome do nó varia por cartório, ex: "Def Roberto"), deixando o conteúdo do
-# PDF classificar. 25 dá folga p/ alcançar requisitório+DEPJU sem estourar o
-# PROCESSO_TIMEOUT_SEG (240s) no pior caso; o goal-stop encerra cedo no caso comum.
-LIMITE_FALLBACK_GENERICO = 25
+# PDF classificar. Com a classificação pela PRÉVIA (sem baixar), cada nó ficou barato
+# (~1-2s) — o alcance do fim pode subir; o goal-stop encerra cedo no caso comum e este
+# teto só limita o pior caso.
+LIMITE_FALLBACK_GENERICO = 60
 
 # Early-stop do fallback: no 0110128, os requisitórios/DEPJU formam um BLOCO contíguo no
 # fim da árvore; depois deles só há petições antigas inúteis. Após ACHAR o bloco, se
@@ -149,6 +150,13 @@ LIMITE_FALLBACK_GENERICO = 25
 # processos que acham cedo). Folga de 8 tolera um scan/petição no meio do bloco sem
 # cortar cedo demais.
 FALLBACK_EARLY_STOP_MISSES = 8
+
+# Contêiner do texto renderizado na PRÉVIA do visualizador (ng2-pdf-viewer / PDF.js).
+# Descoberto no spike 2026-06-09 (processo 0090006): o documento exibido renderiza em
+# div.textLayer > span (selecionável). Lendo esse texto dá pra CLASSIFICAR o documento
+# (requisitório / vínculo DEPJU) SEM baixar o PDF. Pode haver mais de uma .page → ler
+# TODAS as ocorrências e concatenar. Vive no próprio frame visproc (sem iframe aninhado).
+SELETOR_PREVIA_TEXTO = "div.textLayer"
 
 # Botão de download — pega apenas a peça em exibição
 BOTAO_SALVAR_COPIA = 'button[aria-label="Salvar Cópia do Documento em Exibição"]'
