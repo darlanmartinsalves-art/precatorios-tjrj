@@ -142,13 +142,17 @@ def extrair_advogado(pdf_bytes):
 REGEX_OFREQ = re.compile(r"(\d{4}\.\d+)\s*/\s*OFREQ", re.IGNORECASE)
 
 
-def extrair_numero_ofreq(pdf_bytes):
-    """Extrai o número OFREQ (ex: '2025.14235') do texto do PDF, ou None."""
-    texto = _extrair_texto_pdf(pdf_bytes)
+def extrair_numero_ofreq_de_texto(texto):
+    """Extrai o número OFREQ (ex: '2025.14235') de um texto já extraído, ou None."""
     if not texto:
         return None
     m = REGEX_OFREQ.search(texto)
     return m.group(1) if m else None
+
+
+def extrair_numero_ofreq(pdf_bytes):
+    """Extrai o número OFREQ do texto do PDF, ou None. (delega ao por-texto)"""
+    return extrair_numero_ofreq_de_texto(_extrair_texto_pdf(pdf_bytes))
 
 
 REGEX_VINCULO = re.compile(
@@ -158,17 +162,17 @@ REGEX_VINCULO = re.compile(
 )
 
 
-def extrair_vinculo_ofreq_precatorio(pdf_bytes):
-    """Do ofício DEPRE/DEPJU, retorna (ofreq, precatorio) ou None.
-
-    Ex: 'Ofício 2025.06478/OFREQ ... gerou o precatório 2025.06209-0'
-        -> ('2025.06478', '2025.06209-0')
-    """
-    texto = _extrair_texto_pdf(pdf_bytes)
+def extrair_vinculo_ofreq_precatorio_de_texto(texto):
+    """De um texto já extraído do ofício DEPRE/DEPJU, retorna (ofreq, precatorio) ou None."""
     if not texto:
         return None
     m = REGEX_VINCULO.search(texto)
     return (m.group(1), m.group(2)) if m else None
+
+
+def extrair_vinculo_ofreq_precatorio(pdf_bytes):
+    """Do ofício DEPRE/DEPJU (bytes), retorna (ofreq, precatorio) ou None. (delega ao por-texto)"""
+    return extrair_vinculo_ofreq_precatorio_de_texto(_extrair_texto_pdf(pdf_bytes))
 
 
 REGEX_EH_REQUISITORIO = re.compile(r"OF[ÍI]CIO\s+REQUISIT[ÓO]RIO", re.IGNORECASE)
